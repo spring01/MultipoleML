@@ -6,9 +6,11 @@ classdef MatPsiGDMA < handle
     % in that if these 3 properties had some wrong dimension, the program
     % would rather complain about other properties, but not them.
     
+    % The multipoles are stored in the order Q00, Q10, Q11c, Q11s, Q20, ...
+    
     properties (SetAccess = private)
         
-        %! input section
+        %! input section; these field names are assumed by the mex driver
         % sites info
         nucleiCharges    % nuclei charges of sites; 0 for non-atom sites
         xyzSites         % cartesian coordinates of sites
@@ -24,13 +26,13 @@ classdef MatPsiGDMA < handle
         
         % density matrix
         density
+        %! end input section
         
         
         %! output
         % GDMA output
         multipoles;
-        mp_pos;
-        mp_coeff;
+        pairs;
         
     end
     
@@ -46,6 +48,7 @@ classdef MatPsiGDMA < handle
     properties (Access = private)
         
         psi4_sphericalAM; % used in psi4->gaussian density format converting
+        coresIncluded;
         
     end
     
@@ -68,13 +71,14 @@ classdef MatPsiGDMA < handle
             % default algorithm threshold is 0 (always use old algorithm)
             obj.bigexp = 0.0;
             
+            obj.coresIncluded = true;
         end
         
         function SetLimitHeavyHydrogen(obj, heavyLimit, hydrogenLimit)
-            heavyOrNot = (obj.nucleiCharges~=1);
+            heavyOrNot = (obj.nucleiCharges ~= 1);
             obj.limit = zeros(size(heavyOrNot));
-            obj.limit(heavyOrNot==1) = heavyLimit;
-            obj.limit(heavyOrNot==0) = hydrogenLimit;
+            obj.limit(heavyOrNot == 1) = heavyLimit;
+            obj.limit(heavyOrNot == 0) = hydrogenLimit;
         end
         
         function multipoles_ = RunGDMA(obj, occOrb)
@@ -83,26 +87,46 @@ classdef MatPsiGDMA < handle
             obj.density = obj.Psi4OccOrb2GaussianDensity(occOrb);
             
             %!!! GDMA DRIVER MEX !!!
-            [multipoles_, obj.mp_pos, obj.mp_coeff] = ...
-                MatPsiGDMA.matgdma_mex(obj);
-            % output
+            [multipoles_, pos, notMoved, moved] = MatPsiGDMA.matgdma_mex(obj);
+            
+            % build obj.multipoles
             multipoles_ = multipoles_(2:end, 1:length(obj.limit));
             obj.multipoles = multipoles_;
+            
+            % build obj.pairs
+            numPrims = sum(obj.shellNprims);
+            for i = 1:numPrims
+                for j = 1:numPrims
+                    index = (i - 1) * numPrims + j;
+                    obj.pairs{i, j}.xyz = reshape(pos(:, index), 1, []);
+                    obj.pairs{i, j}.notMoved = notMoved(:, index);
+                    obj.pairs{i, j}.moved = ...
+                        reshape(moved(:, index), size(multipoles_, 1), []);
+                end
+            end
         end
         
-        function RemoveCore(obj)
-            coreChargeList = reshape(obj.nucleiCharges, 1, []); % to make sure that it's a row
-            obj.multipoles(1, :) = obj.multipoles(1, :) - coreChargeList;
+        function RemoveCores(obj)
+            if (obj.coresIncluded == false)
+                disp('Warning: cores are not included');
+                return;
+            end
+            obj.multipoles(1, :) = obj.multipoles(1, :) - obj.nucleiCharges;
+            obj.coresIncluded = false;
         end
         
-        function AddCoreBack(obj)
-            coreChargeList = reshape(obj.nucleiCharges, 1, []); % to make sure that it's a row
-            obj.multipoles(1, :) = obj.multipoles(1, :) + coreChargeList;
+        function AddCoresBack(obj)
+            if (obj.coresIncluded == true)
+                disp('Warning: cores are already included');
+                return;
+            end
+            obj.multipoles(1, :) = obj.multipoles(1, :) + obj.nucleiCharges;
+            obj.coresIncluded = true;
         end
         
         function res = NthOrderMthSite(obj, nthOrder, mthSite)
             % Qn0 Qn1s Qn1c Qn2s Qn2c ...
-            res = obj.multipoles(nthOrder^2+1:(nthOrder+1)^2, mthSite);
+            res = obj.multipoles((nthOrder^2 + 1):((nthOrder + 1)^2), mthSite);
         end
         
         % Convert a Psi4 style occupied molecular orbital matrix to 
@@ -113,8 +137,8 @@ classdef MatPsiGDMA < handle
     
     methods (Static, Access = private)
         
-        % mex claimed as a static mathod (to wrap it under @folder)
-        [multipoles_, pos_xyz, not_moved] = matgdma_mex(struct);
+        % mex declared as a static mathod (to wrap it under @folder)
+        [multipoles_, pairsPos, mpCoeff, mpMovedCoeff] = matgdma_mex(struct);
         
     end
     
