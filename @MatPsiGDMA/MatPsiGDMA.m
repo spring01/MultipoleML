@@ -29,6 +29,8 @@ classdef MatPsiGDMA < handle
         %! output
         % GDMA output
         multipoles;
+        mp_pos;
+        mp_coeff;
         
     end
     
@@ -81,8 +83,8 @@ classdef MatPsiGDMA < handle
             obj.density = obj.Psi4OccOrb2GaussianDensity(occOrb);
             
             %!!! GDMA DRIVER MEX !!!
-            multipoles_ = MatPsiGDMA.matgdma_mex(obj);
-            
+            [multipoles_, obj.mp_pos, obj.mp_coeff] = ...
+                MatPsiGDMA.matgdma_mex(obj);
             % output
             multipoles_ = multipoles_(2:end, 1:length(obj.limit));
             obj.multipoles = multipoles_;
@@ -94,8 +96,7 @@ classdef MatPsiGDMA < handle
         end
         
         function AddCoreBack(obj)
-            coreChargeList = zeros(1, length(obj.nucleiCharges));
-            coreChargeList(:) = obj.nucleiCharges; % to make sure that it's a row
+            coreChargeList = reshape(obj.nucleiCharges, 1, []); % to make sure that it's a row
             obj.multipoles(1, :) = obj.multipoles(1, :) + coreChargeList;
         end
         
@@ -113,7 +114,7 @@ classdef MatPsiGDMA < handle
     methods (Static, Access = private)
         
         % mex claimed as a static mathod (to wrap it under @folder)
-        multipoles = matgdma_mex(struct);
+        [multipoles_, pos_xyz, not_moved] = matgdma_mex(struct);
         
     end
     
