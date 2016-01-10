@@ -15,6 +15,11 @@ classdef (Abstract) Base < handle
                 matpsiGDMA.multipoles(1:(matpsiGDMA.limit(iSite)+1)^2, iSite);
         end
         
+        function obj = InitializeFromMultipoles(obj, multipoles, xyz)
+            obj.xyz = reshape(xyz, [], 1);
+            obj.coeffs = reshape(multipoles, [], 1);
+        end
+        
         function interaction = InteractionWith(multiExpA, multiExpB)
             interaction ...
                 = multiExpA.coeffs' ...

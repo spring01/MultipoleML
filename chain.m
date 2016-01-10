@@ -39,3 +39,56 @@ orb = matpsi.SCF_OrbitalAlpha();
 occOrb = orb(:, 1:matpsi.Molecule_NumElectrons()/2);
 gdma.RunGDMA(occOrb);
 
+
+fock = matpsi.SCF_FockAlpha();
+tei = matpsi.Integrals_AllTEIs();
+dens = matpsi.SCF_DensityAlpha();
+
+localIndices = 1:15;
+densRemote = dens;
+for i = localIndices
+    for j = localIndices
+        densRemote(i, j) = 0;
+    end
+end
+
+coulombRemoteRef = reshape(tei(1,1,:,:), 1, []) * reshape(densRemote, [], 1);
+
+
+pairFunc = cell(3, 3);
+for i = 1:3
+    for j = 1:i
+        pairFunc{i, j} = MultipoleExpansion.MaxOrder2();
+        pairFunc{i, j}.InitializeFromMultipoles(gdma.pairs{i, j}.notMoved(1:9), ...
+                                                gdma.pairs{i, j}.xyz);
+    end
+end
+
+pairRemote = cell(size(gdma.pairs));
+for k = 1:size(gdma.pairs, 1)
+    for l = 1:k
+        pairRemote{k, l} = MultipoleExpansion.MaxOrder2();
+        if k > 33 || l > 33
+            pairRemote{k, l}.InitializeFromMultipoles(gdma.pairs{k, l}.notMoved(1:9), ...
+                                                      gdma.pairs{k, l}.xyz);
+        end
+    end
+end
+
+coulombRemote = 0;
+for i = 1:3
+    for j = 1:i
+        for k = 1:size(gdma.pairs, 1)
+            for l = 1:k
+                if k > 33 || l > 33
+                    coulombRemote = coulombRemote + pairFunc{i, j}.InteractionWith(pairRemote{k, l});
+                end
+            end
+        end
+        disp(j);
+    end
+end
+
+
+
+
