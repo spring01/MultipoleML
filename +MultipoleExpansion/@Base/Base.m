@@ -9,6 +9,10 @@ classdef (Abstract) Base < handle
     
     methods
         
+        function AddCoeffsBy(obj, addCoeffs)
+            obj.coeffs = obj.coeffs + addCoeffs;
+        end
+        
         function obj = InitializeFromGDMA(obj, matpsiGDMA, iSite)
             obj.xyz = matpsiGDMA.xyzSites(:, iSite);
             obj.coeffs = ...

@@ -29,7 +29,8 @@ molCart = ...
 
 mol = Molecule(molCart);
 
-matpsi = MatPsi2(molCart, 'sto-3g');
+matpsi = MatPsi2(molCart, '6-31g');
+
 matpsi.SCF_RunSCF();
 
 
@@ -44,7 +45,26 @@ fock = matpsi.SCF_FockAlpha();
 tei = matpsi.Integrals_AllTEIs();
 dens = matpsi.SCF_DensityAlpha();
 
-localIndices = 1:15;
+nbf = matpsi.BasisSet_NumFunctions();
+func2center = matpsi.BasisSet_FuncToCenter();
+func2shell = matpsi.BasisSet_FuncToShell();
+shellNumPrims = matpsi.BasisSet_ShellNumPrimitives();
+
+
+cutoffAtomNum = 11;
+iFunc = 4;
+jFunc = 1;
+iShell = func2shell(iFunc);
+jShell = func2shell(jFunc);
+iPrimOffset = sum(shellNumPrims(1:iShell-1));
+jPrimOffset = sum(shellNumPrims(1:jShell-1));
+
+cutoffFunc = find(func2center == cutoffAtomNum);
+cutoffFunc = cutoffFunc(1);
+cutoffShell = func2shell(cutoffFunc);
+cutoffPrim = sum(shellNumPrims(1:cutoffShell-1));
+
+localIndices = 1:cutoffFunc-1;
 densRemote = dens;
 for i = localIndices
     for j = localIndices
@@ -52,43 +72,96 @@ for i = localIndices
     end
 end
 
-coulombRemoteRef = reshape(tei(1,1,:,:), 1, []) * reshape(densRemote, [], 1);
+% remoteIndices = cutoffFunc:nbf;
+% densRemote = zeros(size(dens));
+% for i = remoteIndices
+%     for j = remoteIndices
+%         densRemote(i, j) = dens(i, j);
+%     end
+% end
 
+coulombRemoteRef = reshape(tei(iFunc,jFunc,:,:), 1, []) * reshape(densRemote, [], 1);
 
-pairFunc = cell(3, 3);
-for i = 1:3
-    for j = 1:i
-        pairFunc{i, j} = MultipoleExpansion.MaxOrder2();
-        pairFunc{i, j}.InitializeFromMultipoles(gdma.pairs{i, j}.notMoved(1:9), ...
-                                                gdma.pairs{i, j}.xyz);
+%%
+iNnumPrim = shellNumPrims(func2shell(iFunc));
+jNnumPrim = shellNumPrims(func2shell(jFunc));
+pairFunc = cell(iNnumPrim, jNnumPrim);
+for i = 1:iNnumPrim
+    for j = 1:jNnumPrim
+        pair = gdma.pairs{i+iPrimOffset, j+jPrimOffset};
+        if norm(pair.xyz) ~= 0
+            pairFunc{i, j} = MultipoleExpansion.MaxOrder3();
+            pairFunc{i, j}.InitializeFromMultipoles(pair.notMoved(1:16), pair.xyz);
+            pairFunc{i, j}.AddCoeffsBy([-pairFunc{i, j}.coeffs(1:3); 0; -pairFunc{i, j}.coeffs(5:end)]);
+        end
     end
 end
+
 
 pairRemote = cell(size(gdma.pairs));
 for k = 1:size(gdma.pairs, 1)
     for l = 1:k
-        pairRemote{k, l} = MultipoleExpansion.MaxOrder2();
-        if k > 33 || l > 33
-            pairRemote{k, l}.InitializeFromMultipoles(gdma.pairs{k, l}.notMoved(1:9), ...
+        pairRemote{k, l} = MultipoleExpansion.MaxOrder3();
+        if k > cutoffPrim || l > cutoffPrim
+            pairRemote{k, l}.InitializeFromMultipoles(gdma.pairs{k, l}.notMoved(1:16), ...
                                                       gdma.pairs{k, l}.xyz);
         end
     end
 end
 
 coulombRemote = 0;
-for i = 1:3
-    for j = 1:i
-        for k = 1:size(gdma.pairs, 1)
-            for l = 1:k
-                if k > 33 || l > 33
-                    coulombRemote = coulombRemote + pairFunc{i, j}.InteractionWith(pairRemote{k, l});
-                end
+% for i = 1:iNnumPrim
+%     for j = 1:jNnumPrim
+%         if ~isempty(pairFunc{i, j})
+%             for k = 1:size(gdma.pairs, 1)
+%                 for l = 1:k
+%                     if k > cutoffPrim || l > cutoffPrim
+%                         coulombRemote = coulombRemote + pairFunc{i, j}.InteractionWith(pairRemote{k, l});
+%                     end
+%                 end
+%             end
+%             disp(j);
+%         end
+%     end
+% end
+
+
+pairRemoteMoved = cell(1, size(gdma.xyzSites, 2));
+for p = 1:size(gdma.xyzSites, 2)
+    pairRemoteMoved{p} = MultipoleExpansion.MaxOrder3();
+    pairRemoteMoved{p}.InitializeFromMultipoles(zeros(16, 1), gdma.xyzSites(:, p));
+end
+
+
+for k = 1:size(gdma.pairs, 1)
+    for l = 1:k
+        pair = gdma.pairs{k, l};
+        if k > cutoffPrim && l > cutoffPrim
+            indMoveTo = find(sum(pair.moved.^2) ~= 0);
+            for ind = indMoveTo
+                pairRemoteMoved{ind}.AddCoeffsBy(pair.moved(1:16, ind));
             end
         end
-        disp(j);
     end
 end
 
+coulombRemoteMoved = 0;
+for i = 1:iNnumPrim
+    for j = 1:jNnumPrim
+        if ~isempty(pairFunc{i, j})
+            for p = 1:length(pairRemoteMoved)
+                if norm(pairRemoteMoved{p}.coeffs) ~= 0
+                    coulombRemoteMoved = coulombRemoteMoved + pairFunc{i, j}.InteractionWith(pairRemoteMoved{p});
+                end
+            end
+            disp(j);
+        end
+    end
+end
+
+coulombRemoteRef
+coulombRemote / 4 / dens(iFunc, jFunc) / ((iFunc == jFunc) + 2 * (iFunc ~= jFunc))
+coulombRemoteMoved / 4 / dens(iFunc, jFunc) / ((iFunc == jFunc) + 2 * (iFunc ~= jFunc))
 
 
 
